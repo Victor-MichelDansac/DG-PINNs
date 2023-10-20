@@ -299,7 +299,7 @@ def run_and_plot(categories, **kwargs):
     nx = kwargs.get("nx", 20)
     nG = kwargs.get("nG", 2)
     source = kwargs.get("source", True)
-    end_time = kwargs.get("end_time", 0.5)
+    end_time = kwargs.get("end_time", 0.5 if source else 1)
     perturbation = 0
 
     for category in categories:
