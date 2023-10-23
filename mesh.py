@@ -299,13 +299,7 @@ def run_and_plot(categories, **kwargs):
     nx = kwargs.get("nx", 20)
     nG = kwargs.get("nG", 2)
     source = kwargs.get("source", True)
-
-    if source:
-        default_end_time = 0.5
-    else:
-        default_end_time = 1
-
-    end_time = kwargs.get("end_time", default_end_time)
+    end_time = kwargs.get("end_time", 0.5)
 
     perturbation = 0
 
