@@ -308,3 +308,4 @@ def run_and_plot(categories, **kwargs):
             perturbation,
         )
         DG_scheme.plot_and_compute_error(W, M)
+

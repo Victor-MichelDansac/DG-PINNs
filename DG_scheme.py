@@ -276,14 +276,11 @@ def compute_BC(u_kmh, u_kph, M, iter):
         return torch.roll(u_kph, +1), torch.roll(u_kmh, -1)
 
     elif M.BC == "exact":
-        u_kph_km1 = torch.zeros_like(u_kph)
-        u_kmh_kp1 = torch.zeros_like(u_kmh)
+        left_BC = u_solutions.u_exact(M.dof[+0], M.dt * iter, M)
+        right_BC = u_solutions.u_exact(M.dof[-1], M.dt * iter, M)
 
-        u_kph_km1[+1:] = u_kph[:-1]
-        u_kmh_kp1[:-1] = u_kmh[+1:]
-
-        u_kph_km1[:+1] = u_solutions.u_exact(M.dof[+0], M.dt * iter, M)
-        u_kmh_kp1[-1:] = u_solutions.u_exact(M.dof[-1], M.dt * iter, M)
+        u_kph_km1 = torch.cat((left_BC.view(1), u_kph[:-1]), axis=0)
+        u_kmh_kp1 = torch.cat((u_kmh[+1:], right_BC.view(1)), axis=0)
 
         return u_kph_km1, u_kmh_kp1
 
@@ -299,15 +296,17 @@ def update(W, M, iter):
     v_shape = nx * nG
     m_shape = (nx, nG)
 
+    reshaped_W = W.reshape(m_shape)
+
     # volume term
 
-    u = torch.sum(W.reshape(m_shape)[:, :, None] * phi, axis=1)
+    u = torch.sum(reshaped_W[:, :, None] * phi, axis=1)
     K = dx * torch.sum(M.w_Gauss * physical_flux(u, c)[:, None, :] * d_phi, axis=-1)
 
     # flux term
 
-    u_kmh = torch.sum(W.reshape(m_shape) * phi[:, :, +0], axis=1)
-    u_kph = torch.sum(W.reshape(m_shape) * phi[:, :, -1], axis=1)
+    u_kmh = torch.sum(reshaped_W * phi[:, :, +0], axis=1)
+    u_kph = torch.sum(reshaped_W * phi[:, :, -1], axis=1)
 
     u_kph_km1, u_kmh_kp1 = compute_BC(u_kmh, u_kph, M, iter)
 
