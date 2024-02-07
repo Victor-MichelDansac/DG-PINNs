@@ -2,11 +2,11 @@
 @author: Victor Michel-Dansac <victor.michel-dansac@inria.fr>
 """
 
+import time
+
 import DG_scheme
 import matplotlib.pyplot as plt
-import numpy as np
-import scipy.sparse as sps
-import scipy.sparse.linalg as spsl
+import torch
 from model import Network
 
 
@@ -98,7 +98,7 @@ class Mesh:
             self.nQ = max(self.nG + 1, 3)
 
         self.dx = 1 / self.nx
-        self.x = np.linspace(0 + self.dx / 2, 1 - self.dx / 2, self.nx)
+        self.x = torch.linspace(0 + self.dx / 2, 1 - self.dx / 2, self.nx)
 
         self.c = 1
 
@@ -107,9 +107,9 @@ class Mesh:
             self.b = self.fixed_b
             self.u0 = self.fixed_u0
         elif self.random_parameters:
-            self.a = np.random.uniform(self.a_min, self.a_max)
-            self.b = np.random.uniform(self.b_min, self.b_max)
-            self.u0 = np.random.uniform(self.u0_min, self.u0_max)
+            self.a = torch.random.uniform(self.a_min, self.a_max)
+            self.b = torch.random.uniform(self.b_min, self.b_max)
+            self.u0 = torch.random.uniform(self.u0_min, self.u0_max)
         else:
             self.a = (self.a_min + self.a_max) / 2
             self.b = (self.b_min + self.b_max) / 2
@@ -118,19 +118,19 @@ class Mesh:
         self.p_Gauss, self.w_Gauss = DG_scheme.get_Gauss(self.nQ)
 
         self.dof = (
-            np.repeat(self.x, self.nQ)
-            + (np.tile(self.p_Gauss, self.nx) * 2 - 1) * self.dx / 2
+            self.x.repeat_interleave(self.nQ)
+            + (torch.tile(self.p_Gauss, (self.nx,)) * 2 - 1) * self.dx / 2
         )
         self.nb_dof = len(self.dof)
 
-        self.weights = np.tile(self.w_Gauss, self.nx)
+        self.weights = torch.tile(self.w_Gauss, (self.nx,))
 
         self.dt = self.dx / 10
 
         self.dt *= Mesh.cfl_factors[self.time_integrator]
         self.dt *= self.cfl_factor
 
-        self.t = np.linspace(0, self.end_time, 2 + int(self.end_time / self.dt))
+        self.t = torch.linspace(0, self.end_time, 2 + int(self.end_time / self.dt))
         self.nb_iter = len(self.t) - 1
         self.dt = self.t[1] - self.t[0]
 
@@ -138,30 +138,28 @@ class Mesh:
             self.x[:, None] + self.dx * self.p_Gauss[None, :] - self.dx / 2
         )
 
-        self.phi = np.zeros((self.nx, self.nG, self.nQ))
-        self.d_phi = np.zeros((self.nx, self.nG, self.nQ))
+        self.phi = torch.zeros((self.nx, self.nG, self.nQ))
+        self.d_phi = torch.zeros((self.nx, self.nG, self.nQ))
 
         for iG in range(self.nG):
             self.phi[:, iG] = self.phi_k(self.p_Gauss_loc, self.x[:, None], iG)
             self.d_phi[:, iG] = self.d_phi_k(self.p_Gauss_loc, self.x[:, None], iG)
 
-        M_blocks = (
-            self.dx
-            * np.sum(
-                self.w_Gauss * self.phi[:, :, None] * self.phi[:, None, :],
-                axis=-1,
-            )
-            + 1e-15
+        M_blocks = self.dx * torch.sum(
+            self.w_Gauss * self.phi[:, :, None] * self.phi[:, None, :],
+            axis=-1,
         )
-        self.inv_mass_matrix = spsl.splu(sps.block_diag(M_blocks, format="csc"))
+
+        id = torch.eye(self.nG)[None, ...].repeat(M_blocks.shape[0], 1, 1)
+        self.M_blocks_inv = torch.linalg.inv(1e-15 * id + M_blocks)
 
         if self.perturbation:
-            self.errors_over_time = np.zeros(self.nb_iter + 1)
+            self.errors_over_time = torch.zeros(self.nb_iter + 1)
 
     def initial_perturbation(self, x):
-        return 1 + self.perturbation * np.sin(2 * np.pi * x)
+        return 1 + self.perturbation * torch.sin(2 * torch.pi * x)
 
-    def phi_0(self, x: np.array) -> np.array:
+    def phi_0(self, x: torch.Tensor, x0) -> torch.Tensor:
         """Compute the first basis function.
 
         Args:
@@ -171,13 +169,13 @@ class Mesh:
             value of the first basis function at each point x
         """
         if self.category == "no_prior":
-            return np.ones_like(x)
+            return torch.ones_like(x)
         elif "with_prior" in self.category:
-            return self.PINN.predict_u_from_numpy(x, self)
+            return self.PINN.predict_u(x, self).detach()
         else:
             raise ValueError(f"category {self.category} not understood in phi_0")
 
-    def d_phi_0(self, x: np.array) -> np.array:
+    def d_phi_0(self, x: torch.Tensor, x0) -> torch.Tensor:
         """Compute the derivative of the first basis function.
 
         Args:
@@ -187,13 +185,13 @@ class Mesh:
             value of the derivative of the first basis function at each point x
         """
         if self.category == "no_prior":
-            return np.zeros_like(x)
+            return torch.zeros_like(x)
         elif "with_prior" in self.category:
-            return self.PINN.predict_dxu_from_numpy(x, self)
+            return self.PINN.predict_dxu(x, self).detach()
         else:
             raise ValueError(f"category {self.category} not understood in d_phi_0")
 
-    def phi_k(self, x: np.array, x0: np.array, k: int) -> np.array:
+    def phi_k(self, x: torch.Tensor, x0: torch.Tensor, k: int) -> torch.Tensor:
         """Compute the k-th basis function.
 
         Args:
@@ -205,18 +203,18 @@ class Mesh:
             value of the k-th basis function at each point x
         """
         if k == 0:
-            return self.phi_0(x)
+            return self.phi_0(x, x0)
         else:
             x_c = x - x0
             if "with_prior" in self.category:
                 if self.category == "with_prior_multiplicative":
-                    return x_c**k / k * self.phi_0(x)
+                    return x_c**k / k * self.phi_0(x, x0)
                 elif self.category == "with_prior_additive":
                     return x_c**k / k
             else:
                 return x_c**k / k
 
-    def d_phi_k(self, x: np.array, x0: np.array, k: int) -> np.array:
+    def d_phi_k(self, x: torch.Tensor, x0: torch.Tensor, k: int) -> torch.Tensor:
         """Compute the derivative of the k-th basis function.
 
         Args:
@@ -228,13 +226,13 @@ class Mesh:
             value of the derivative of the k-th basis function at each point x
         """
         if k == 0:
-            return self.d_phi_0(x)
+            return self.d_phi_0(x, x0)
         else:
             x_c = x - x0
             if "with_prior" in self.category:
                 if self.category == "with_prior_multiplicative":
-                    phi = self.phi_0(x)
-                    return (x_c ** (k - 1)) * phi + x_c**k / k * self.d_phi_0(x)
+                    phi = self.phi_0(x, x0)
+                    return (x_c ** (k - 1)) * phi + x_c**k / k * self.d_phi_0(x, x0)
                 elif self.category == "with_prior_additive":
                     return x_c ** (k - 1)
             else:
@@ -242,6 +240,7 @@ class Mesh:
 
 
 def solve(category, nx, nG, source, end_time, perturbation):
+    start = time.time()
     M = Mesh(
         category,
         nx,
@@ -250,7 +249,13 @@ def solve(category, nx, nG, source, end_time, perturbation):
         end_time,
         perturbation,
     )
-    return DG_scheme.run(M), M
+    M.cpu_time_mesh = time.time() - start
+
+    start = time.time()
+    W = DG_scheme.run(M)
+    M.cpu_time_scheme = time.time() - start
+
+    return W, M
 
 
 def run_perturbation_analysis(categories, **kwargs):
@@ -261,10 +266,8 @@ def run_perturbation_analysis(categories, **kwargs):
 
     perturbations = [1e-0, 1e-2, 1e-4]
 
-    n_c = len(categories)
+    len(categories)
     n_p = len(perturbations)
-
-    errors = [[np.array((0)) for _ in range(n_c)] for _ in range(n_p)]
 
     fig, ax = plt.subplots(1, n_p, figsize=(5 * n_p, 5))
 
@@ -278,21 +281,13 @@ def run_perturbation_analysis(categories, **kwargs):
                 end_time,
                 perturbation,
             )
-            errors[i_p][i_c] = np.copy(M.errors_over_time)
 
-            ax[i_p].semilogy(M.t, errors[i_p][i_c], label=category)
+            ax[i_p].semilogy(
+                M.t.detach().cpu(), M.errors_over_time.detach().cpu(), label=category
+            )
 
         ax[i_p].set_title(f"initial perturbation = {perturbation}")
         ax[i_p].legend()
-
-    n_t = len(errors[0][0])
-    errors = np.array(errors).reshape(n_c * n_p, n_t).T
-
-    header = "t"
-
-    for perturbation in perturbations:
-        for category in categories:
-            header += f", {category} {perturbation}"
 
 
 def run_and_plot(categories, **kwargs):

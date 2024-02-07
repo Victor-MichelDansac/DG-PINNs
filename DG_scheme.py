@@ -2,58 +2,60 @@
 @author: Victor Michel-Dansac <victor.michel-dansac@inria.fr>
 """
 
+import math
+
 import matplotlib.pyplot as plt
-import numpy as np
+import torch
 import u_solutions
 
 
-def get_Gauss(nQ: int) -> (np.array, np.array):
+def get_Gauss(nQ: int) -> (torch.Tensor, torch.Tensor):
     if nQ == 2:
-        p_Gauss = np.array([0.0, 1.0])
-        w_Gauss = np.array([1 / 2, 1 / 2])
+        p_Gauss = torch.tensor([0.0, 1.0])
+        w_Gauss = torch.tensor([1 / 2, 1 / 2])
 
     elif nQ == 3:
-        p_Gauss = np.array([0.0, 0.5, 1.0])
-        w_Gauss = np.array([1 / 6, 2 / 3, 1 / 6])
+        p_Gauss = torch.tensor([0.0, 0.5, 1.0])
+        w_Gauss = torch.tensor([1 / 6, 2 / 3, 1 / 6])
 
     elif nQ == 4:
-        p_Gauss = np.array([0, (5 - np.sqrt(5)) / 10, (5 + np.sqrt(5)) / 10, 1])
-        w_Gauss = np.array([1, 5, 5, 1]) / 12
+        p_Gauss = torch.tensor([0, (5 - math.sqrt(5)) / 10, (5 + math.sqrt(5)) / 10, 1])
+        w_Gauss = torch.tensor([1, 5, 5, 1]) / 12
 
     elif nQ == 5:
-        p_Gauss = np.array(
+        p_Gauss = torch.tensor(
             [
                 0,
-                (np.sqrt(7) - np.sqrt(3)) / (2 * np.sqrt(7)),
+                (math.sqrt(7) - math.sqrt(3)) / (2 * math.sqrt(7)),
                 0.5,
-                (np.sqrt(7) + np.sqrt(3)) / (2 * np.sqrt(7)),
+                (math.sqrt(7) + math.sqrt(3)) / (2 * math.sqrt(7)),
                 1,
             ]
         )
-        w_Gauss = np.array([9, 49, 64, 49, 9]) / 180
+        w_Gauss = torch.tensor([9, 49, 64, 49, 9]) / 180
 
     elif nQ == 6:
         p_Gauss = (
             1
-            + np.array(
+            + torch.tensor(
                 [
                     -1,
-                    -np.sqrt(1 / 3 + 2 * np.sqrt(7) / 21),
-                    -np.sqrt(1 / 3 - 2 * np.sqrt(7) / 21),
-                    np.sqrt(1 / 3 - 2 * np.sqrt(7) / 21),
-                    np.sqrt(1 / 3 + 2 * np.sqrt(7) / 21),
+                    -math.sqrt(1 / 3 + 2 * math.sqrt(7) / 21),
+                    -math.sqrt(1 / 3 - 2 * math.sqrt(7) / 21),
+                    math.sqrt(1 / 3 - 2 * math.sqrt(7) / 21),
+                    math.sqrt(1 / 3 + 2 * math.sqrt(7) / 21),
                     1,
                 ]
             )
         ) / 2
         w_Gauss = (
-            np.array(
+            torch.tensor(
                 [
                     2,
-                    14 - np.sqrt(7),
-                    14 + np.sqrt(7),
-                    14 + np.sqrt(7),
-                    14 - np.sqrt(7),
+                    14 - math.sqrt(7),
+                    14 + math.sqrt(7),
+                    14 + math.sqrt(7),
+                    14 - math.sqrt(7),
                     2,
                 ]
             )
@@ -72,49 +74,64 @@ def physical_flux(u, c):
 
 def upwind_flux(u_l, u_r, c):
     centred_term = (physical_flux(u_l, c) + physical_flux(u_r, c)) / 2
-    diffusion = np.abs(c) * (u_r - u_l) / 2
+    diffusion = abs(c) * (u_r - u_l) / 2
     return centred_term - diffusion
 
 
 def project_on_fine_mesh(u, x, mesh):
     nx = len(x)
-    uh = np.zeros((nx,))
-    mesh_indices = np.argmin(np.abs(x[:, None] - mesh.x[None, :]), axis=1)
+    uh = torch.zeros((nx,))
+    mesh_indices = torch.argmin(torch.abs(x[:, None] - mesh.x[None, :]), axis=1)
     for j in range(mesh.nG):
         uh += u[mesh_indices * mesh.nG + j] * mesh.phi_k(x, mesh.x[mesh_indices], j)
     return uh
 
 
 def compute_error(u, mesh):
-    u_ = np.sum(u.reshape((mesh.nx, mesh.nG))[:, :, None] * mesh.phi, axis=1)
+    u_ = torch.sum(u.reshape((mesh.nx, mesh.nG))[:, :, None] * mesh.phi, axis=1)
 
     difference = (u_ - u_solutions.u_exact(mesh.p_Gauss_loc, mesh.end_time, mesh)) ** 2
 
-    return np.sqrt(mesh.dx * np.sum(difference))
+    return torch.sqrt(mesh.dx * torch.sum(difference))
 
 
 def plot_and_compute_error(u, mesh):
     error = compute_error(u, mesh)
 
     n_visu = 1000
-    x = np.linspace(0, 1, n_visu + 1)
+    x = torch.linspace(0, 1, n_visu + 1)
 
     u_fine = project_on_fine_mesh(u, x, mesh)
 
     _, ax = plt.subplots(1, 2, figsize=(10, 5))
 
-    ax[0].plot(x, u_fine, label="approx")
-    ax[0].plot(x, u_solutions.u_exact(x, mesh.end_time, mesh), label="exact")
+    ax[0].plot(x.detach().cpu(), u_fine.detach().cpu(), label="approx")
+    ax[0].plot(
+        x.detach().cpu(),
+        u_solutions.u_exact(x, mesh.end_time, mesh).detach().cpu(),
+        label="exact",
+    )
 
     ax[0].set_title(f"{mesh.category}")
     ax[0].legend()
 
     ax[1].plot(
-        x, u_fine - u_solutions.u_exact(x, mesh.end_time, mesh), label="difference"
+        x.detach().cpu(),
+        u_fine.detach().cpu()
+        - u_solutions.u_exact(x, mesh.end_time, mesh).detach().cpu(),
+        label="difference",
     )
     ax[1].legend()
 
-    print(f"{mesh.category: >35s},  error = {error: 6.3e}")
+    string = f"{mesh.category: >35s},  error = {error: 4.3e}"
+    try:
+        string += f"\n{'CPU times': >35s}:  meshing = {mesh.cpu_time_mesh: 4.2e}"
+        string += f"\n{'CPU times': >35s}:   scheme = {mesh.cpu_time_scheme: 4.2e}"
+        string += f"\n{'CPU times': >35s}:    total = {mesh.cpu_time_scheme: 4.2e}\n"
+    except AttributeError:
+        pass
+
+    print(string)
 
 
 def time_integration(W_0, mesh, iter):
@@ -209,7 +226,7 @@ def time_integration(W_0, mesh, iter):
         return W_5
 
     elif mesh.time_integrator == "SSPRK410":
-        W_1 = np.copy(W_0)
+        W_1 = torch.clone(W_0)
         for _ in range(5):
             W_1 += update(W_1, mesh, iter) / 6
         W_2 = 1 / 25 * W_0 + 9 / 25 * W_1
@@ -226,13 +243,14 @@ def initialize(M):
         u_0 *= M.initial_perturbation(M.p_Gauss_loc)
 
     u_0_ = M.w_Gauss * M.phi * u_0[:, None, :]
-    rhs = M.dx * np.sum(u_0_, axis=-1).reshape(M.nx * M.nG)
+    rhs = M.dx * torch.sum(u_0_, axis=-1)
 
-    return M.inv_mass_matrix.solve(rhs)
+    return torch.einsum("ijk,ij->ik", M.M_blocks_inv, rhs).reshape(M.nx * M.nG)
 
 
 def run(M):
     iter = 0
+
     W = initialize(M)
 
     while iter < M.nb_iter:
@@ -251,71 +269,62 @@ def run(M):
     return W
 
 
-def compute_BC(u_kmh, u_kph, mesh, iter):
-    assert mesh.BC in ["periodic", "exact"]
+def compute_BC(u_kmh, u_kph, M, iter):
+    assert M.BC in ["periodic", "exact"]
 
-    if mesh.BC == "periodic":
-        return np.roll(u_kph, +1), np.roll(u_kmh, -1)
+    if M.BC == "periodic":
+        return torch.roll(u_kph, +1), torch.roll(u_kmh, -1)
 
-    elif mesh.BC == "exact":
-        u_kph_km1 = np.zeros_like(u_kph)
-        u_kmh_kp1 = np.zeros_like(u_kmh)
+    elif M.BC == "exact":
+        u_kph_km1 = torch.zeros_like(u_kph)
+        u_kmh_kp1 = torch.zeros_like(u_kmh)
 
         u_kph_km1[+1:] = u_kph[:-1]
         u_kmh_kp1[:-1] = u_kmh[+1:]
 
-        u_kph_km1[:+1] = u_solutions.u_exact(mesh.dof[+0], mesh.dt * iter, mesh)
-        u_kmh_kp1[-1:] = u_solutions.u_exact(mesh.dof[-1], mesh.dt * iter, mesh)
+        u_kph_km1[:+1] = u_solutions.u_exact(M.dof[+0], M.dt * iter, M)
+        u_kmh_kp1[-1:] = u_solutions.u_exact(M.dof[-1], M.dt * iter, M)
 
         return u_kph_km1, u_kmh_kp1
 
 
-def update(W, mesh, iter):
+def update(W, M, iter):
     # get local variables from mesh
 
-    nx, nG = mesh.nx, mesh.nG
-    c, dx, dt = mesh.c, mesh.dx, mesh.dt
+    nx, nG = M.nx, M.nG
+    c, dx, dt = M.c, M.dx, M.dt
 
-    phi, d_phi = mesh.phi, mesh.d_phi
+    phi, d_phi = M.phi, M.d_phi
 
     v_shape = nx * nG
     m_shape = (nx, nG)
 
-    # mass matrix
-
-    inv_M = mesh.inv_mass_matrix
-
     # volume term
 
-    u = np.sum(W.reshape(m_shape)[:, :, None] * phi, axis=1)
-    K = dx * np.sum(
-        mesh.w_Gauss * physical_flux(u, c)[:, None, :] * d_phi, axis=-1
-    ).reshape(v_shape)
+    u = torch.sum(W.reshape(m_shape)[:, :, None] * phi, axis=1)
+    K = dx * torch.sum(M.w_Gauss * physical_flux(u, c)[:, None, :] * d_phi, axis=-1)
 
     # flux term
 
-    u_kmh = np.sum(W.reshape(m_shape) * phi[:, :, +0], axis=1)
-    u_kph = np.sum(W.reshape(m_shape) * phi[:, :, -1], axis=1)
+    u_kmh = torch.sum(W.reshape(m_shape) * phi[:, :, +0], axis=1)
+    u_kph = torch.sum(W.reshape(m_shape) * phi[:, :, -1], axis=1)
 
-    u_kph_km1, u_kmh_kp1 = compute_BC(u_kmh, u_kph, mesh, iter)
+    u_kph_km1, u_kmh_kp1 = compute_BC(u_kmh, u_kph, M, iter)
 
     F = (
-        upwind_flux(u_kph, u_kmh_kp1, mesh.c)[:, None] * phi[:, :, -1]
-        - upwind_flux(u_kph_km1, u_kmh, mesh.c)[:, None] * phi[:, :, +0]
-    ).reshape(v_shape)
+        upwind_flux(u_kph, u_kmh_kp1, M.c)[:, None] * phi[:, :, -1]
+        - upwind_flux(u_kph_km1, u_kmh, M.c)[:, None] * phi[:, :, +0]
+    )
 
     flux_source = K - F
 
     # source term
 
-    if mesh.source:
-        S = mesh.a * u + mesh.b * u**2
-        source_integral = dx * np.sum(
-            mesh.w_Gauss * S[:, None, :] * phi, axis=-1
-        ).reshape(v_shape)
-
+    if M.source:
+        S = M.a * u + M.b * u**2
+        source_integral = dx * torch.sum(M.w_Gauss * S[:, None, :] * phi, axis=-1)
         flux_source += source_integral
 
-    flux_source = inv_M.solve(flux_source)
+    flux_source = torch.einsum("ijk,ij->ik", M.M_blocks_inv, flux_source)
 
-    return dt * flux_source
+    return dt * flux_source.reshape(v_shape)

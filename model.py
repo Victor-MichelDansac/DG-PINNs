@@ -237,6 +237,49 @@ class Network:
             file_name,
         )
 
+    def predict_u(self, x, mesh):
+        """
+        Uses the model to predict the value of u at the space points x,
+        using the parameters a, b and u0 contained in the instance of mesh.
+
+        Args:
+            x, a tensor containing the space points
+            mesh, an instance of the Mesh class, containing the values of a, b and u0
+
+        Return:
+            a tensor, of shape x.shape, containing the prediction of u(x)
+        """
+        x_ = x.reshape((x.nelement(), 1))
+        ones = torch.ones_like(x_)
+
+        a = mesh.a * ones
+        b = mesh.b * ones
+        u0 = mesh.u0 * ones
+
+        return self.get_u(x_, a, b, u0).reshape(x.shape)
+
+    def predict_dxu(self, x, mesh):
+        """
+        Uses the model to predict the value of du/dx at the space points x,
+        using the parameters a, b and u0 contained in the instance of mesh.
+
+        Args:
+            x, a tensor containing the space points
+            mesh, an instance of the Mesh class, containing the values of a, b and u0
+
+        Return:
+            a tensor, of shape x.shape, containing the prediction of du/dx(x)
+        """
+        x_ = x.reshape((x.nelement(), 1)).requires_grad_(True)
+        ones = torch.ones_like(x_)
+
+        a = mesh.a * ones
+        b = mesh.b * ones
+        u0 = mesh.u0 * ones
+
+        u_pred = self.get_u(x_, a, b, u0)
+        return grad(u_pred, x_, ones, create_graph=False)[0].reshape(x.shape)
+
     def predict_u_from_floats(
         self, x: torch.Tensor, a: float, b: float, u0: float
     ) -> torch.Tensor:
