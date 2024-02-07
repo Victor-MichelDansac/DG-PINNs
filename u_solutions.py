@@ -23,7 +23,10 @@ def dxu_ini(x, mesh):
 
 def u_exact(x, t, mesh):
     if mesh.source:
-        return u_ini(x, mesh)
+        try:  # case where t is a tensor and x is a float
+            return u_ini(x, mesh) * torch.ones_like(t)
+        except TypeError:  # case where t is a float and x is a tensor
+            return u_ini(x, mesh)
     else:
         xt = x - mesh.c * t
         xt = xt - torch.floor(xt)
@@ -32,7 +35,10 @@ def u_exact(x, t, mesh):
 
 def dxu_exact(x, t, mesh):
     if mesh.source:
-        return dxu_ini(x, mesh)
+        try:  # case where t is a tensor and x is a float
+            return dxu_ini(x, mesh) * torch.ones_like(t)
+        except TypeError:  # case where t is a float and x is a tensor
+            return dxu_ini(x, mesh)
     else:
         xt = x - mesh.c * t
         xt = xt - torch.floor(xt)

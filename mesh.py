@@ -7,6 +7,7 @@ import time
 import DG_scheme
 import matplotlib.pyplot as plt
 import torch
+import u_solutions
 from model import Network
 
 
@@ -52,11 +53,12 @@ class Mesh:
 
         self.nQ = kwargs.get("nQ", self.nG + 1)
 
-        self.BC = kwargs.get("BC", "exact")
         self.time_integrator = kwargs.get("time_integrator", "SSPRK34")
         self.cfl_factor = kwargs.get("cfl_factor", 1)
 
-        if not self.source:
+        if self.source:
+            self.BC = "exact"
+        else:
             self.BC = "periodic"
 
         assert self.BC in [
@@ -156,6 +158,9 @@ class Mesh:
         if self.perturbation:
             self.errors_over_time = torch.zeros(self.nb_iter + 1)
 
+        if self.BC == "exact":
+            self.precompute_exact_BC()
+
     def initial_perturbation(self, x):
         return 1 + self.perturbation * torch.sin(2 * torch.pi * x)
 
@@ -238,6 +243,11 @@ class Mesh:
             else:
                 return x_c ** (k - 1)
 
+    def precompute_exact_BC(self):
+        times = self.dt * torch.arange(self.nb_iter + 1)
+        self.L_BC = u_solutions.u_exact(self.dof[+0], times, self)
+        self.R_BC = u_solutions.u_exact(self.dof[-1], times, self)
+
 
 def solve(category, nx, nG, source, end_time, perturbation):
     start = time.time()
@@ -308,4 +318,3 @@ def run_and_plot(categories, **kwargs):
             perturbation,
         )
         DG_scheme.plot_and_compute_error(W, M)
-

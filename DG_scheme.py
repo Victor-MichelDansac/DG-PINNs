@@ -73,9 +73,14 @@ def physical_flux(u, c):
 
 
 def upwind_flux(u_l, u_r, c):
-    centred_term = (physical_flux(u_l, c) + physical_flux(u_r, c)) / 2
-    diffusion = abs(c) * (u_r - u_l) / 2
-    return centred_term - diffusion
+    if c == 1:
+        return u_l
+    elif c == -1:
+        return u_r
+    else:
+        centred_term = (physical_flux(u_l, c) + physical_flux(u_r, c)) / 2
+        diffusion = abs(c) * (u_r - u_l) / 2
+        return centred_term - diffusion
 
 
 def project_on_fine_mesh(u, x, mesh):
@@ -276,13 +281,11 @@ def compute_BC(u_kmh, u_kph, M, iter):
         return torch.roll(u_kph, +1), torch.roll(u_kmh, -1)
 
     elif M.BC == "exact":
-        left_BC = u_solutions.u_exact(M.dof[+0], M.dt * iter, M)
-        right_BC = u_solutions.u_exact(M.dof[-1], M.dt * iter, M)
 
-        u_kph_km1 = torch.cat((left_BC.view(1), u_kph[:-1]), axis=0)
-        u_kmh_kp1 = torch.cat((u_kmh[+1:], right_BC.view(1)), axis=0)
-
-        return u_kph_km1, u_kmh_kp1
+        return (
+            torch.cat((M.L_BC[iter].view(1), u_kph[:-1]), axis=0),
+            torch.cat((u_kmh[+1:], M.R_BC[iter].view(1)), axis=0),
+        )
 
 
 def update(W, M, iter):
