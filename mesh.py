@@ -318,3 +318,71 @@ def run_and_plot(categories, **kwargs):
             perturbation,
         )
         DG_scheme.plot_and_compute_error(W, M)
+
+
+def run_cpu_time_comparison(**kwargs):
+    import numpy as np
+
+    default_categories = [
+        "no_prior",
+        "with_prior_additive",
+    ]
+    default_nG = [1, 2, 3, 4]
+    default_nx = 10 * 2 ** np.arange(5)
+
+    categories = kwargs.get("categories", default_categories)
+    all_nG = kwargs.get("all_nG", default_nG)
+    all_nx = kwargs.get("all_nx", default_nx)
+    n_runs = kwargs.get("n_runs", 5)
+
+    cpu_times_mesh = np.zeros((n_runs, len(all_nx), len(all_nG), len(categories)))
+    cpu_times_scheme = np.zeros((n_runs, len(all_nx), len(all_nG), len(categories)))
+
+    for i_run in range(n_runs):
+        print(f"run {i_run + 1}/{n_runs}")
+        for i_nx, nx in enumerate(all_nx):
+            for i_nG, nG in enumerate(all_nG):
+                for i_c, category in enumerate(categories):
+                    W, M = solve(category, nx, nG, True, 0.5, False)
+                    cpu_times_mesh[i_run, i_nx, i_nG, i_c] = M.cpu_time_mesh
+                    cpu_times_scheme[i_run, i_nx, i_nG, i_c] = M.cpu_time_scheme
+
+    cpu_times_mesh = np.mean(np.sort(cpu_times_mesh, axis=0)[:3], axis=0)
+    cpu_times_scheme = np.mean(np.sort(cpu_times_scheme, axis=0)[:3], axis=0)
+
+    print()
+
+    def to_ltx(f):
+        float_str = f"{f:3.2e}"
+        if "e" in float_str:
+            base, exponent = float_str.split("e")
+            return rf"${base} \cdot 10^{{{int(exponent)}}}$"
+        else:
+            return float_str
+
+    for i_nG, nG in enumerate(all_nG):
+        string = f"results for q = {nG - 1} \n \\toprule \n"
+        string += " & \\multicolumn{3}{c}{basis $V_h$} & \\multicolumn{3}{c}{basis $V_h^+$} & \\\\ \n"
+        string += "\\cmidrule(lr){2-4}\\cmidrule(lr){5-7}\n"
+        string += "$K$"
+        string += "".join([" & assembly & scheme & total" for category in categories])
+        string += " & ratio \\\\ \n"
+        string += "\\cmidrule(lr){1-1}\\cmidrule(lr){2-4}\\cmidrule(lr){5-7}\\cmidrule(lr){8-8}\n"
+
+        for i_nx, nx in enumerate(all_nx):
+            string += f"{nx:3d} "
+            total = []
+            for i_c, category in enumerate(categories):
+                mesh = cpu_times_mesh[i_nx, i_nG, i_c]
+                scheme = cpu_times_scheme[i_nx, i_nG, i_c]
+                total.append(mesh + scheme)
+                string += f"& {to_ltx(mesh)} & {to_ltx(scheme)} & {to_ltx(total[-1])}"
+            string += f"& {total[1] / total[0]: 3.2f}"
+            string += " \\\\ \n"
+        string += "\\bottomrule \n"
+
+        print(string)
+
+
+if __name__ == "__main__":
+    run_cpu_time_comparison()
