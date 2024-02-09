@@ -376,6 +376,8 @@ class Network:
         n_epochs = kwargs.get("n_epochs", 500)
         n_collocation = kwargs.get("n_collocation", 10_000)
         n_data = kwargs.get("n_data", 0)
+        min_loss = kwargs.get("min_loss", 1e-15)
+        plot = kwargs.get("plot", True)
 
         assert (
             n_data > 0 or n_collocation > 0
@@ -386,7 +388,10 @@ class Network:
         except AttributeError:
             best_loss_value = 1e10
 
-        for epoch in range(n_epochs):
+        epoch = 0
+        current_loss = best_loss_value
+
+        while epoch < n_epochs and current_loss > min_loss:
             self.optimizer.zero_grad()
 
             self.loss = 0
@@ -414,6 +419,9 @@ class Network:
                 best_net = cp.deepcopy(self.net.state_dict())
                 best_optimizer = cp.deepcopy(self.optimizer.state_dict())
 
+            epoch += 1
+            current_loss = self.loss.item()
+
         print(f"epoch {epoch: 5d}: current loss = {self.loss.item():5.2e}")
 
         try:
@@ -428,7 +436,8 @@ class Network:
         except UnboundLocalError:
             pass
 
-        self.plot_result()
+        if plot:
+            self.plot_result()
 
     def plot_result(self, random=False, n_plots=1):
         import matplotlib.pyplot as plt
