@@ -3,6 +3,7 @@
 """
 
 import copy as cp
+import time
 
 import torch
 import torch.nn as nn
@@ -49,6 +50,7 @@ class Network:
     DEFAULT_FILE_NAME = "network_advection.pth"
 
     DEFAULT_LEARNING_RATE = 1e-3
+    DEFAULT_LBFGS_SWITCH = 1e-15
 
     DEFAULT_LAYER_SIZES = [4, 16, 32, 32, 16, 5]
 
@@ -68,8 +70,11 @@ class Network:
         self.file_name = kwargs.get("file_name", self.DEFAULT_FILE_NAME)
 
         self.learning_rate = kwargs.get("learning_rate", self.DEFAULT_LEARNING_RATE)
+        self.loss_to_switch_to_LBFGS = kwargs.get(
+            "loss_to_switch_to_LBFGS", self.DEFAULT_LBFGS_SWITCH
+        )
 
-        self.layer_sizes = self.DEFAULT_LAYER_SIZES
+        self.layer_sizes = kwargs.get("layer_sizes", self.DEFAULT_LAYER_SIZES)
 
         self.create_network()
         self.load(self.file_name)
@@ -201,7 +206,23 @@ class Network:
 
     def create_network(self):
         self.net = nn.DataParallel(Net(self.layer_sizes))
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
+        self.nb_parameters = sum(
+            p.numel() for p in self.net.parameters() if p.requires_grad
+        )
+
+        self.Adam_optimizer = torch.optim.Adam(
+            self.net.parameters(), lr=self.learning_rate
+        )
+
+        self.LBFGS_optimizer = None
+
+    def create_LBFGS_optimizer(self):
+        self.LBFGS_optimizer = torch.optim.LBFGS(
+            self.net.parameters(),
+            history_size=15,
+            max_iter=5,
+            line_search_fn="strong_wolfe",
+        )
 
     def load(self, file_name):
         self.loss_history = []
@@ -213,7 +234,7 @@ class Network:
                 checkpoint = torch.load(file_name, map_location=torch.device("cpu"))
 
             self.net.load_state_dict(checkpoint["model_state_dict"])
-            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            self.Adam_optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             self.loss = checkpoint["loss"]
 
             try:
@@ -221,11 +242,25 @@ class Network:
             except KeyError:
                 pass
 
+            if checkpoint["LBFGS_optimizer_state_dict"] is not None:
+                self.create_LBFGS_optimizer()
+                self.LBFGS_optimizer.load_state_dict(
+                    checkpoint["LBFGS_optimizer_state_dict"]
+                )
+
         except FileNotFoundError:
             print("network was not loaded from file: training needed")
 
     @staticmethod
-    def save(file_name, epoch, net_state, optimizer_state, loss, loss_history):
+    def save(
+        file_name,
+        epoch,
+        net_state,
+        optimizer_state,
+        loss,
+        loss_history,
+        LBFGS_optimizer_state=None,
+    ):
         torch.save(
             {
                 epoch: epoch,
@@ -233,6 +268,7 @@ class Network:
                 "optimizer_state_dict": optimizer_state,
                 "loss": loss,
                 "loss_history": loss_history,
+                "LBFGS_optimizer_state_dict": LBFGS_optimizer_state,
             },
             file_name,
         )
@@ -391,36 +427,87 @@ class Network:
         epoch = 0
         current_loss = best_loss_value
 
+        LBFGS_activated = self.LBFGS_optimizer is not None
+
+        losses_to_check = [1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9]
+        loss_number = 0
+        self.epochs_and_times = []
+
+        start_time = time.perf_counter()
+
         while epoch < n_epochs and current_loss > min_loss:
-            self.optimizer.zero_grad()
 
-            self.loss = 0
+            def closure():
+                if LBFGS_activated:
+                    self.LBFGS_optimizer.zero_grad()
+                else:
+                    self.Adam_optimizer.zero_grad()
 
-            if n_collocation > 0:
-                # Loss based on PDE residual
-                self.loss += self.pde_loss(n_collocation)
+                self.loss = 0
 
-            if n_data > 0:
-                # Loss based on data
-                self.loss += self.data_loss(n_data)
+                if n_collocation > 0:
+                    # Loss based on PDE residual
+                    self.loss += self.pde_loss(n_collocation)
 
-            self.loss.backward()
-            self.optimizer.step()
+                if n_data > 0:
+                    # Loss based on data
+                    self.loss += self.data_loss(n_data)
+
+                self.loss.backward()
+                return self.loss
+
+            if LBFGS_activated:
+                self.LBFGS_optimizer.step(closure)
+            else:
+                closure()
+                self.Adam_optimizer.step()
 
             self.loss_history.append(self.loss.item())
 
-            if epoch % 500 == 0:
-                print(f"epoch {epoch: 5d}: current loss = {self.loss.item():5.2e}")
+            if plot and epoch % 500 == 0:
+                print(f"epoch {epoch: 5d}: best loss = {self.loss.item():5.2e}")
 
             if self.loss.item() < best_loss_value:
-                print(f"epoch {epoch: 5d}: best loss = {self.loss.item():5.2e}")
+                if plot:
+                    print(f"epoch {epoch: 5d}: best loss = {self.loss.item():5.2e}")
                 best_loss = self.loss.clone()
                 best_loss_value = best_loss.item()
                 best_net = cp.deepcopy(self.net.state_dict())
-                best_optimizer = cp.deepcopy(self.optimizer.state_dict())
+                best_optimizer = cp.deepcopy(self.Adam_optimizer.state_dict())
+
+            if (not LBFGS_activated) and (
+                LBFGS_activated := (best_loss_value < self.loss_to_switch_to_LBFGS)
+            ):
+                print(
+                    f"epoch {epoch: 5d}: switching to LBFGS, best loss = {best_loss_value:5.2e}"
+                )
+                self.create_LBFGS_optimizer()
+
+            if best_loss_value < losses_to_check[loss_number]:
+                print(f"epoch {epoch: 5d}: best loss = {best_loss_value:5.2e}")
+                self.epochs_and_times.append(
+                    [
+                        self.nb_parameters,
+                        LBFGS_activated,
+                        losses_to_check[loss_number],
+                        epoch,
+                        time.perf_counter() - start_time,
+                    ]
+                )
+                loss_number += 1
 
             epoch += 1
             current_loss = self.loss.item()
+
+        self.epochs_and_times.append(
+            [
+                self.nb_parameters,
+                LBFGS_activated,
+                best_loss_value,
+                epoch,
+                time.perf_counter() - start_time,
+            ]
+        )
 
         print(f"epoch {epoch: 5d}: current loss = {self.loss.item():5.2e}")
 
